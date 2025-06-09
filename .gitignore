@@ -1,0 +1,14 @@
+.cproject
+.project
+.settings
+.mxproject
+Debug
+Drivers
+Try3 Debug.launch
+STM32F407VETX_FLASH.ld
+STM32F407VETX_RAM.ld
+Core/StartUp
+Core/Src/**
+Core/Inc/**
+!Core/Src/main.c
+!Core/Inc/main.h
