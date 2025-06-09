@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "i2c_lcd.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,10 +50,13 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim9;
 
-I2C_LCD_HandleTypeDef lcd1;
-
 /* USER CODE BEGIN PV */
-
+I2C_LCD_HandleTypeDef lcd1;
+volatile uint32_t Current_Overflow_Counter = 0;
+volatile uint64_t Last_Rising_Edge_Total_Ticks = 0;
+volatile uint64_t Period_Total_Ticks = 0;
+volatile uint64_t DutyCycle_Total_Ticks = 0;
+volatile uint8_t  Capture_State = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,7 +75,19 @@ static void MX_I2C1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+float GetPeriodSeconds(void) {
+    return (float)Period_Total_Ticks * TICKS_TO_SECONDS;
+}
 
+float GetFrequencyHz(void) {
+    if (Period_Total_Ticks == 0) return 0.0f;
+    return TIMER_CLOCK_FREQ_HZ / (float)Period_Total_Ticks;
+}
+
+float GetDutyCyclePercent(void) {
+    if (Period_Total_Ticks == 0) return 0.0f;
+    return ((float)DutyCycle_Total_Ticks / Period_Total_Ticks) * 100.0f;
+}
 /* USER CODE END 0 */
 
 /**
@@ -112,21 +128,49 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
-
   lcd1.hi2c = &hi2c1;
   lcd1.address = 0x4E;
   lcd_init(&lcd1);
+  lcd_puts(&lcd1, "loading...");
 
-  lcd_puts(&lcd1, "I am a genius");
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  lcd_clear(&lcd1);
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  float freq = GetFrequencyHz();
+	  char freq_str[50];
+	  snprintf(freq_str, sizeof(freq_str), "%.4f", freq);
+
+	  float duty = GetDutyCyclePercent();
+	  char duty_str[50];
+	  snprintf(duty_str, sizeof(duty_str), "%.4f", duty);
+	  lcd_gotoxy(&lcd1, 0, 0);
+	  lcd_puts(&lcd1, freq_str);
+	  lcd_gotoxy(&lcd1, 0, 1);
+	  lcd_puts(&lcd1, duty_str);
+	  HAL_Delay(10000);
+	  lcd_clear(&lcd1);
+
   }
   /* USER CODE END 3 */
 }
@@ -603,6 +647,7 @@ void Error_Handler(void)
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
+	  lcd_puts(&lcd1, "error");
   {
   }
   /* USER CODE END Error_Handler_Debug */
