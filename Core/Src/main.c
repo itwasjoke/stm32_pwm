@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "i2c_lcd.h"
 #include <stdio.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,11 +53,113 @@ TIM_HandleTypeDef htim9;
 
 /* USER CODE BEGIN PV */
 I2C_LCD_HandleTypeDef lcd1;
-volatile uint32_t Current_Overflow_Counter = 0;
-volatile uint64_t Last_Rising_Edge_Total_Ticks = 0;
-volatile uint64_t Period_Total_Ticks = 0;
-volatile uint64_t DutyCycle_Total_Ticks = 0;
-volatile uint8_t  Capture_State = 0;
+volatile uint8_t cur_channel = 0;
+PWM_Meas_Channel_t pwm_channels[NUM_PWM_CHANNELS] = {
+		{
+				.htim = &htim1,
+				.tim_instance = TIM1,
+				.ic_channel_rising = TIM_CHANNEL_1,
+				.ic_channel_falling = TIM_CHANNEL_2,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_1,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_2,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim1,
+				.tim_instance = TIM1,
+				.ic_channel_rising = TIM_CHANNEL_3,
+				.ic_channel_falling = TIM_CHANNEL_4,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_3,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_4,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim2,
+				.tim_instance = TIM2,
+				.ic_channel_rising = TIM_CHANNEL_3,
+				.ic_channel_falling = TIM_CHANNEL_4,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_3,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_4,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim3,
+				.tim_instance = TIM3,
+				.ic_channel_rising = TIM_CHANNEL_1,
+				.ic_channel_falling = TIM_CHANNEL_2,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_1,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_2,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim3,
+				.tim_instance = TIM3,
+				.ic_channel_rising = TIM_CHANNEL_3,
+				.ic_channel_falling = TIM_CHANNEL_4,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_3,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_4,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim4,
+				.tim_instance = TIM4,
+				.ic_channel_rising = TIM_CHANNEL_1,
+				.ic_channel_falling = TIM_CHANNEL_2,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_1,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_2,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim4,
+				.tim_instance = TIM4,
+				.ic_channel_rising = TIM_CHANNEL_3,
+				.ic_channel_falling = TIM_CHANNEL_4,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_3,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_4,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+		{
+				.htim = &htim9,
+				.tim_instance = TIM9,
+				.ic_channel_rising = TIM_CHANNEL_1,
+				.ic_channel_falling = TIM_CHANNEL_2,
+				.ic_channel_rising_active = HAL_TIM_ACTIVE_CHANNEL_1,
+				.ic_channel_falling_active = HAL_TIM_ACTIVE_CHANNEL_2,
+				.overflow_counter = 0,
+				.last_rising_edge_ticks = 0,
+				.period_total_ticks = 0,
+				.duty_cycle_total_ticks = 0,
+				.capture_state = 0
+		},
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,18 +178,25 @@ static void MX_I2C1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-float GetPeriodSeconds(void) {
-    return (float)Period_Total_Ticks * TICKS_TO_SECONDS;
+float GetPeriodSeconds(uint8_t channel_idx) {
+    if (channel_idx >= NUM_PWM_CHANNELS) {
+        return 0.0f;
+    }
+    return (float)pwm_channels[channel_idx].period_total_ticks * TICKS_TO_SECONDS;
 }
 
-float GetFrequencyHz(void) {
-    if (Period_Total_Ticks == 0) return 0.0f;
-    return TIMER_CLOCK_FREQ_HZ / (float)Period_Total_Ticks;
+float GetFrequencyHz(uint8_t channel_idx) {
+    if (channel_idx >= NUM_PWM_CHANNELS || pwm_channels[channel_idx].period_total_ticks == 0) {
+        return 0.0f;
+    }
+    return TIMER_CLOCK_FREQ_HZ / (float)pwm_channels[channel_idx].period_total_ticks;
 }
 
-float GetDutyCyclePercent(void) {
-    if (Period_Total_Ticks == 0) return 0.0f;
-    return ((float)DutyCycle_Total_Ticks / Period_Total_Ticks) * 100.0f;
+float GetDutyCyclePercent(uint8_t channel_idx) {
+    if (channel_idx >= NUM_PWM_CHANNELS || pwm_channels[channel_idx].period_total_ticks == 0) {
+        return 0.0f;
+    }
+    return ((float)pwm_channels[channel_idx].duty_cycle_total_ticks / pwm_channels[channel_idx].period_total_ticks) * 100.0f;
 }
 /* USER CODE END 0 */
 
@@ -133,6 +243,7 @@ int main(void)
   lcd_init(&lcd1);
   lcd_puts(&lcd1, "loading...");
 
+  // htim1
   if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK)
   {
 	  Error_Handler();
@@ -142,10 +253,94 @@ int main(void)
   {
 	  Error_Handler();
   }
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   if (HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
   {
 	  Error_Handler();
   }
+
+  // htim2
+  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  // htim3
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  // htim4
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  // htim9
+  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim9) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
 
   /* USER CODE END 2 */
 
@@ -157,18 +352,44 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  float freq = GetFrequencyHz();
-	  char freq_str[50];
-	  snprintf(freq_str, sizeof(freq_str), "%.4f", freq);
 
-	  float duty = GetDutyCyclePercent();
-	  char duty_str[50];
-	  snprintf(duty_str, sizeof(duty_str), "%.4f", duty);
+	  float period = GetPeriodSeconds(cur_channel);
+	  char period_str[15];
+	  snprintf(period_str, sizeof(period_str), "%.2f", period);
+
+	  float duty = GetDutyCyclePercent(cur_channel);
+	  char duty_str[15];
+	  snprintf(duty_str, sizeof(duty_str), "%.2f", duty);
+
+	  char channel_number_str[15];
+	  sprintf(channel_number_str, "%u", cur_channel+1);
+
 	  lcd_gotoxy(&lcd1, 0, 0);
-	  lcd_puts(&lcd1, freq_str);
+	  lcd_puts(&lcd1, period_str);
 	  lcd_gotoxy(&lcd1, 0, 1);
 	  lcd_puts(&lcd1, duty_str);
-	  HAL_Delay(10000);
+	  lcd_gotoxy(&lcd1, 15, 1);
+	  lcd_puts(&lcd1, channel_number_str);
+	  if (cur_channel == 7)
+	  {
+		  cur_channel = 0;
+	  }
+	  else
+	  {
+		  cur_channel++;
+	  }
+	  for (uint8_t i = 0; i < NUM_PWM_CHANNELS; i++)
+	  {
+		  if (pwm_channels[i].overflow_counter >= OVERFLOW_THRESHOLD_1_SEC)
+		  {
+			  pwm_channels[i].overflow_counter = 0;
+			  pwm_channels[i].last_rising_edge_ticks = 0;
+			  pwm_channels[i].period_total_ticks = 0;
+			  pwm_channels[i].duty_cycle_total_ticks = 0;
+			  pwm_channels[i].capture_state = 0;
+		  }
+	  }
+	  HAL_Delay(2000);
 	  lcd_clear(&lcd1);
 
   }
@@ -298,13 +519,11 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
   sConfigIC.ICSelection = TIM_ICSELECTION_INDIRECTTI;
   if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
   if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_3) != HAL_OK)
   {

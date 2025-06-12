@@ -7,3 +7,5 @@ Drivers
 Try3 Debug.launch
 STM32F407VETX_FLASH.ld
 STM32F407VETX_RAM.ld
+Core/Inc/i2c_lcd.h
+Core/Src/i2c_lcd.c

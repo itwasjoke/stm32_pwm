@@ -53,50 +53,61 @@
 /* USER CODE BEGIN 0 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM1)
+    for (uint8_t i = 0; i < NUM_PWM_CHANNELS; i++)
     {
-        Current_Overflow_Counter++;
+        if (pwm_channels[i].tim_instance == htim->Instance)
+        {
+            pwm_channels[i].overflow_counter++;
+        }
     }
 }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM1)
+    uint32_t current_channel = htim->Channel;
+
+    for (uint8_t i = 0; i < NUM_PWM_CHANNELS; i++)
     {
-        uint32_t current_capture_overflow_adjusted = Current_Overflow_Counter;
-        if (__HAL_TIM_GET_FLAG(htim, TIM_FLAG_UPDATE) != RESET)
+        if (pwm_channels[i].tim_instance == htim->Instance &&
+           (pwm_channels[i].ic_channel_rising_active == current_channel ||
+            pwm_channels[i].ic_channel_falling_active == current_channel))
         {
-            current_capture_overflow_adjusted++;
-            __HAL_TIM_CLEAR_FLAG(htim, TIM_FLAG_UPDATE);
-        }
-
-        if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
-        {
-            uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-            uint64_t current_rising_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
-
-            if (Capture_State == 0)
+            uint32_t current_capture_overflow_adjusted = pwm_channels[i].overflow_counter;
+            if (__HAL_TIM_GET_FLAG(htim, TIM_FLAG_UPDATE) != RESET)
             {
-                Last_Rising_Edge_Total_Ticks = current_rising_edge_total_ticks;
-                Capture_State = 1;
+                current_capture_overflow_adjusted++;
+                __HAL_TIM_CLEAR_FLAG(htim, TIM_FLAG_UPDATE);
             }
-            else if (Capture_State == 2)
-            {
-                Period_Total_Ticks = current_rising_edge_total_ticks - Last_Rising_Edge_Total_Ticks;
-                Last_Rising_Edge_Total_Ticks = current_rising_edge_total_ticks;
-                Capture_State = 1;
-            }
-        }
-        else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
-        {
-            if (Capture_State == 1)
-            {
-                uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-                uint64_t current_falling_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
 
-                DutyCycle_Total_Ticks = current_falling_edge_total_ticks - Last_Rising_Edge_Total_Ticks;
-                Capture_State = 2;
+            if (current_channel == pwm_channels[i].ic_channel_rising_active)
+            {
+                uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, pwm_channels[i].ic_channel_rising);
+                uint64_t current_rising_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
+
+                if (pwm_channels[i].capture_state == 0)
+                {
+                    pwm_channels[i].last_rising_edge_ticks = current_rising_edge_total_ticks;
+                    pwm_channels[i].capture_state = 1;
+                }
+                else if (pwm_channels[i].capture_state == 2)
+                {
+                    pwm_channels[i].period_total_ticks = current_rising_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
+                    pwm_channels[i].last_rising_edge_ticks = current_rising_edge_total_ticks;
+                    pwm_channels[i].capture_state = 1;
+                }
             }
+            else if (current_channel == pwm_channels[i].ic_channel_falling_active)
+            {
+                if (pwm_channels[i].capture_state == 1)
+                {
+                    uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, pwm_channels[i].ic_channel_falling);
+                    uint64_t current_falling_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
+
+                    pwm_channels[i].duty_cycle_total_ticks = current_falling_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
+                    pwm_channels[i].capture_state = 2;
+                }
+            }
+            break;
         }
     }
 }
@@ -263,20 +274,6 @@ void TIM1_BRK_TIM9_IRQHandler(void)
   /* USER CODE BEGIN TIM1_BRK_TIM9_IRQn 1 */
 
   /* USER CODE END TIM1_BRK_TIM9_IRQn 1 */
-}
-
-/**
-  * @brief This function handles TIM1 update interrupt and TIM10 global interrupt.
-  */
-void TIM1_UP_TIM10_IRQHandler(void)
-{
-  /* USER CODE BEGIN TIM1_UP_TIM10_IRQn 0 */
-
-  /* USER CODE END TIM1_UP_TIM10_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim1);
-  /* USER CODE BEGIN TIM1_UP_TIM10_IRQn 1 */
-
-  /* USER CODE END TIM1_UP_TIM10_IRQn 1 */
 }
 
 /**
