@@ -51,6 +51,14 @@
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI1)
+    {
+        spi_transfer_complete = 1;
+    }
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     for (uint8_t i = 0; i < NUM_PWM_CHANNELS; i++)
@@ -84,36 +92,42 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
                 uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, pwm_channels[i].ic_channel_rising);
                 uint64_t current_rising_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
 
-                if (pwm_channels[i].capture_state == 0)
-                {
-                    pwm_channels[i].last_rising_edge_ticks = current_rising_edge_total_ticks;
-                    pwm_channels[i].capture_state = 1;
+                if (pwm_channels[i].last_rising_edge_ticks != 0 && current_rising_edge_total_ticks > pwm_channels[i].last_rising_edge_ticks){
+                	pwm_channels[i].period_total_ticks[pwm_channels[i].idx] = current_rising_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
+                } else if (pwm_channels[i].last_rising_edge_ticks != 0){
+                	pwm_channels[i].period_total_ticks[pwm_channels[i].idx] = TIMER_MAX_VALUE + 1 - pwm_channels[i].last_rising_edge_ticks + current_rising_edge_total_ticks;
                 }
-                else if (pwm_channels[i].capture_state == 2)
+
+                pwm_channels[i].last_rising_edge_ticks = raw_capture_value;
+
+                pwm_channels[i].overflow_counter = 0;
+                if (pwm_channels[i].idx == 7)
                 {
-                    pwm_channels[i].period_total_ticks = current_rising_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
-                    pwm_channels[i].last_rising_edge_ticks = current_rising_edge_total_ticks;
-                    pwm_channels[i].capture_state = 1;
+                	 pwm_channels[i].idx = 0;
+                } else {
+                	pwm_channels[i].idx++;
                 }
             }
-            else if (current_channel == pwm_channels[i].ic_channel_falling_active)
-            {
-                if (pwm_channels[i].capture_state == 1)
-                {
-                    uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, pwm_channels[i].ic_channel_falling);
-                    uint64_t current_falling_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
+            else if (current_channel == pwm_channels[i].ic_channel_falling_active) {
 
-                    pwm_channels[i].duty_cycle_total_ticks = current_falling_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
-                    pwm_channels[i].capture_state = 2;
-                }
+				uint32_t raw_capture_value = HAL_TIM_ReadCapturedValue(htim, pwm_channels[i].ic_channel_falling);
+				uint64_t current_falling_edge_total_ticks = (uint64_t)current_capture_overflow_adjusted * (TIMER_MAX_VALUE + 1) + raw_capture_value;
+
+				if (current_falling_edge_total_ticks > pwm_channels[i].last_rising_edge_ticks){
+					pwm_channels[i].duty_cycle_total_ticks[pwm_channels[i].idx] = current_falling_edge_total_ticks - pwm_channels[i].last_rising_edge_ticks;
+				} else {
+					pwm_channels[i].duty_cycle_total_ticks[pwm_channels[i].idx] = TIMER_MAX_VALUE + 1 - pwm_channels[i].last_rising_edge_ticks + current_falling_edge_total_ticks;
+				}
             }
             break;
+
         }
     }
 }
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern SPI_HandleTypeDef hspi1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
@@ -330,6 +344,20 @@ void TIM4_IRQHandler(void)
   /* USER CODE BEGIN TIM4_IRQn 1 */
 
   /* USER CODE END TIM4_IRQn 1 */
+}
+
+/**
+  * @brief This function handles SPI1 global interrupt.
+  */
+void SPI1_IRQHandler(void)
+{
+  /* USER CODE BEGIN SPI1_IRQn 0 */
+
+  /* USER CODE END SPI1_IRQn 0 */
+  HAL_SPI_IRQHandler(&hspi1);
+  /* USER CODE BEGIN SPI1_IRQn 1 */
+
+  /* USER CODE END SPI1_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

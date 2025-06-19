@@ -44,6 +44,8 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+SPI_HandleTypeDef hspi1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -54,6 +56,7 @@ TIM_HandleTypeDef htim9;
 /* USER CODE BEGIN PV */
 I2C_LCD_HandleTypeDef lcd1;
 volatile uint8_t cur_channel = 0;
+volatile uint8_t main_channel = 1;
 PWM_Meas_Channel_t pwm_channels[NUM_PWM_CHANNELS] = {
 		{
 				.htim = &htim1,
@@ -160,6 +163,13 @@ PWM_Meas_Channel_t pwm_channels[NUM_PWM_CHANNELS] = {
 				.capture_state = 0
 		},
 };
+
+// SPI
+uint8_t slave_all_data[40];
+uint8_t slave_rx_buffer[6];
+uint8_t slave_tx_buffer[6];
+volatile uint8_t spi_transfer_complete = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -172,31 +182,63 @@ static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-float GetPeriodSeconds(uint8_t channel_idx) {
+uint32_t getPeriodSeconds(uint8_t channel_idx) {
     if (channel_idx >= NUM_PWM_CHANNELS) {
         return 0.0f;
     }
-    return (float)pwm_channels[channel_idx].period_total_ticks * TICKS_TO_SECONDS;
+    uint64_t all_periods = 0;
+    uint8_t count = 0;
+    for (int i = 0; i < NUM_PWM_CHANNELS; i++){
+    	uint64_t current_period = pwm_channels[channel_idx].period_total_ticks[i];
+    	if (current_period != 0){
+    		count++;
+    		all_periods+=current_period;
+    	}
+    }
+    return (uint32_t) ((float)all_periods / count / TIMER_CLOCK_FREQ_HZ);
 }
 
-float GetFrequencyHz(uint8_t channel_idx) {
-    if (channel_idx >= NUM_PWM_CHANNELS || pwm_channels[channel_idx].period_total_ticks == 0) {
-        return 0.0f;
+uint8_t getDutyCyclePercent(uint8_t channel_idx) {
+    if (channel_idx >= NUM_PWM_CHANNELS) {
+        return 0;
     }
-    return TIMER_CLOCK_FREQ_HZ / (float)pwm_channels[channel_idx].period_total_ticks;
+    float all_duty = 0;
+	uint8_t count = 0;
+	for (int i = 0; i < NUM_PWM_CHANNELS; i++){
+		uint64_t current_duty_ticks = pwm_channels[channel_idx].duty_cycle_total_ticks[i];
+		uint64_t current_period = pwm_channels[channel_idx].period_total_ticks[i];
+		if (current_period != 0 && current_duty_ticks != 0){
+			count++;
+			all_duty+=(float)current_duty_ticks/current_period;
+		}
+	}
+    return (uint8_t)(all_duty/count * 100.0f);
 }
 
-float GetDutyCyclePercent(uint8_t channel_idx) {
-    if (channel_idx >= NUM_PWM_CHANNELS || pwm_channels[channel_idx].period_total_ticks == 0) {
-        return 0.0f;
+void convert_u32_to_bytes(uint32_t src, uint8_t *dest, uint16_t channel) {
+        dest[channel*5 + 1] = (uint8_t)((src >> 24) & 0xFF);
+        dest[channel*5 + 2] = (uint8_t)((src >> 16) & 0xFF);
+        dest[channel*5 + 3] = (uint8_t)((src >> 8) & 0xFF);
+        dest[channel*5 + 4] = (uint8_t)(src & 0xFF);
+}
+
+void init_slave_spi_transfer() {
+    for (int i = 0; i < 6; i++) slave_tx_buffer[i] = 0x00;
+    HAL_SPI_TransmitReceive_IT(&hspi1, slave_tx_buffer, slave_rx_buffer, 6);
+}
+
+void prepare_slave_data() {
+    for (int i = 0; i < NUM_PWM_CHANNELS; i++) {
+        slave_all_data[i * 5] = getDutyCyclePercent(i);
+        convert_u32_to_bytes(getPeriodSeconds(i), slave_all_data, i);
     }
-    return ((float)pwm_channels[channel_idx].duty_cycle_total_ticks / pwm_channels[channel_idx].period_total_ticks) * 100.0f;
 }
 /* USER CODE END 0 */
 
@@ -224,7 +266,6 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -236,161 +277,61 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM9_Init();
   MX_I2C1_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
   lcd1.hi2c = &hi2c1;
   lcd1.address = 0x4E;
   lcd_init(&lcd1);
-  lcd_puts(&lcd1, "loading...");
+  lcd_clear(&lcd1);
 
-  // htim1
-  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_4) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  // htim2
-  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_3) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_4) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  // htim3
-  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_2) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_3) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_4) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  // htim4
-  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_3) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_4) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  // htim9
-  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_1) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_2) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-  if (HAL_TIM_Base_Start_IT(&htim9) != HAL_OK)
-  {
-	  Error_Handler();
-  }
-
-
+  init_slave_spi_transfer();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  lcd_clear(&lcd1);
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  prepare_slave_data();
 
-	  float period = GetPeriodSeconds(cur_channel);
-	  char period_str[15];
-	  snprintf(period_str, sizeof(period_str), "%.2f", period);
+	  if (spi_transfer_complete == 1){
+		  spi_transfer_complete = 0;
+		  cur_channel = slave_rx_buffer[0] - 1;
+		  slave_tx_buffer[0] = slave_rx_buffer[0];
 
-	  float duty = GetDutyCyclePercent(cur_channel);
-	  char duty_str[15];
-	  snprintf(duty_str, sizeof(duty_str), "%.2f", duty);
+		  if (cur_channel < NUM_PWM_CHANNELS) {
+			  for (int i = 0; i < 5; i++)
+				  slave_tx_buffer[i + 1] = slave_all_data[cur_channel * 5 + i];
+		  } else {
+			  for (int i = 0; i < 6; i++) slave_tx_buffer[i] = 0xFF;
+		  }
+		  HAL_SPI_TransmitReceive_IT(&hspi1, slave_tx_buffer, slave_rx_buffer, 6);
+	  }
 
-	  char channel_number_str[15];
-	  sprintf(channel_number_str, "%u", cur_channel+1);
-
+	  uint8_t currentDuty = getDutyCyclePercent(main_channel);
+	  uint32_t currentPeriod = getPeriodSeconds(main_channel);
+	  char duty_str[4];
+	  char period_str[11];
+	  char number_str[5];
+	  sprintf(duty_str, "%u", currentDuty);
+	  sprintf(number_str, "%u", main_channel+1);
+	  sprintf(period_str, "%lu", currentPeriod);
 	  lcd_gotoxy(&lcd1, 0, 0);
 	  lcd_puts(&lcd1, period_str);
 	  lcd_gotoxy(&lcd1, 0, 1);
 	  lcd_puts(&lcd1, duty_str);
-	  lcd_gotoxy(&lcd1, 15, 1);
-	  lcd_puts(&lcd1, channel_number_str);
-	  if (cur_channel == 7)
-	  {
-		  cur_channel = 0;
-	  }
-	  else
-	  {
-		  cur_channel++;
-	  }
-	  for (uint8_t i = 0; i < NUM_PWM_CHANNELS; i++)
-	  {
-		  if (pwm_channels[i].overflow_counter >= OVERFLOW_THRESHOLD_1_SEC)
-		  {
-			  pwm_channels[i].overflow_counter = 0;
-			  pwm_channels[i].last_rising_edge_ticks = 0;
-			  pwm_channels[i].period_total_ticks = 0;
-			  pwm_channels[i].duty_cycle_total_ticks = 0;
-			  pwm_channels[i].capture_state = 0;
-		  }
-	  }
-	  HAL_Delay(2000);
-	  lcd_clear(&lcd1);
+	  lcd_gotoxy(&lcd1, 14,1);
+	  lcd_puts(&lcd1, number_str);
+	  HAL_Delay(500);
+//	  lcd_clear(&lcd1);
+//	  if (main_channel == 7){
+//		  main_channel = 0;
+//	  } else {
+//		  main_channel++;
+//	  }
 
   }
   /* USER CODE END 3 */
@@ -477,6 +418,43 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_SLAVE;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief TIM1 Initialization Function
   * @param None
   * @retval None
@@ -536,7 +514,27 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM1_Init 2 */
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
 
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END TIM1_Init 2 */
 
 }
@@ -590,7 +588,18 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM2_Init 2 */
-
+  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END TIM2_Init 2 */
 
 }
@@ -656,7 +665,27 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM3_Init 2 */
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
 
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END TIM3_Init 2 */
 
 }
@@ -722,7 +751,27 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
 
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_3) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK)
+  {
+	  Error_Handler();
+  }
   /* USER CODE END TIM4_Init 2 */
 
 }
@@ -818,6 +867,19 @@ static void MX_TIM9_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM9_Init 2 */
+  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_1) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+
+  if (HAL_TIM_IC_Start_IT(&htim9, TIM_CHANNEL_2) != HAL_OK)
+  {
+	  Error_Handler();
+  }
+  if (HAL_TIM_Base_Start_IT(&htim9) != HAL_OK)
+  {
+	  Error_Handler();
+  }
 
   /* USER CODE END TIM9_Init 2 */
 
